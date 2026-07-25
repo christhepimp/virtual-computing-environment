@@ -2,21 +2,21 @@
 
 ## Done
 
-- [x] World systems, registration, buses, memory, storage
-- [x] Firmware + full power / device lifecycle
-- [x] Emulator Integration Layer (adapters + QEMU transport)
-- [x] Dry-run mode when QEMU binary is absent
-- [x] Minimal machine config for boot experiments
+- [x] World systems + hardware lifecycle
+- [x] Emulator integration layer + QEMU transport
+- [x] Real memory path through MemoryMapSystem
+- [x] Real storage path through StorageSystem + virtual disk signature
+- [x] IRQ raise/ack path through InterruptSystem
+- [x] Clock adapter from ClockSystem
+- [x] Boot experiment runner + asset discovery + logging
 
 ## Next
 
-- [ ] Shared-memory or socket IPC between QEMU and MemoryAdapter
-- [ ] Wire virtio-blk requests into StorageSystem
-- [ ] IRQCHIP-style delivery from InterruptSystem into guest
-- [ ] Optional -kernel boot experiment path end-to-end
-- [ ] Interactive power button
+- [ ] Bidirectional IPC (shared memory / socket) for live QEMU RAM ops
+- [ ] Virtio-blk backend wired to StorageSystem
+- [ ] Capture QEMU serial into boot log
+- [ ] Reset vector / firmware hand-off address for guest entry
 
 ## Later
 
-- [ ] Richer device set without moving authority out of the world
-- [ ] Display path from GPU controller to DisplayAdapter
+- [ ] Full kernel boot CI fixture with buildroot image

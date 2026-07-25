@@ -1,13 +1,7 @@
 //! Emulator Integration Layer.
 //!
-//! Sits between world systems and QEMU. Reads machine state from the world
-//! (power, clock, memory map, interrupts, storage, buses) and presents a
-//! coherent view to the emulator transport. Writes from the emulator side
-//! are applied only through the same world interfaces an OS would use
-//! (memory map, bus transactions, interrupt acknowledge, block I/O).
-//!
-//! This layer does not replace or bypass DeviceRegistry, PowerSystem,
-//! MemoryMapSystem, or any other world system.
+//! Translates world hardware interfaces for the guest execution transport.
+//! Does not own hardware. Does not bypass world systems.
 
 use bevy::prelude::*;
 
@@ -26,7 +20,6 @@ use super::qemu::{QemuTransport, QemuTransportState};
 pub enum EmulatorState {
     #[default]
     Stopped,
-    /// Firmware is Ready; integration may start the guest.
     Arming,
     Running,
     Paused,
@@ -41,13 +34,10 @@ pub enum EmulatorEvent {
     Paused,
     Resumed,
     Crashed(String),
-    /// Guest attempted access; logged for boot experiments.
     GuestMemoryAccess { addr: u64, write: bool, len: usize },
     GuestInterrupt { vector: u8 },
 }
 
-/// Central integration object. Holds adapters and transport status.
-/// Not a hardware owner — only a translation surface.
 #[derive(Resource)]
 pub struct EmulatorIntegration {
     pub state: EmulatorState,
@@ -79,7 +69,6 @@ impl Default for EmulatorIntegration {
     }
 }
 
-/// Drive integration lifecycle from firmware + power only.
 pub fn integration_lifecycle(
     firmware: Res<Firmware>,
     power: Res<PowerSystem>,
@@ -104,20 +93,23 @@ pub fn integration_lifecycle(
                 integ.state = EmulatorState::Stopped;
                 return;
             }
-            // Attempt to start transport (may be dry-run if QEMU not installed).
             match integ.transport.start(&config) {
                 Ok(()) => {
                     integ.state = EmulatorState::Running;
                     events.send(EmulatorEvent::Started);
-                    println!("[EmulatorLayer] Guest transport started ({})", integ.transport.mode_name());
+                    println!(
+                        "[EmulatorLayer] Guest transport started ({})",
+                        integ.transport.mode_name()
+                    );
                 }
                 Err(e) => {
                     integ.last_error = Some(e.clone());
-                    // Stay armed in dry-run so adapters still sync for experiments.
                     integ.state = EmulatorState::Running;
                     integ.transport.state = QemuTransportState::DryRun;
                     events.send(EmulatorEvent::Started);
-                    println!("[EmulatorLayer] QEMU unavailable ({e}) — running in dry-run adapter mode");
+                    println!(
+                        "[EmulatorLayer] QEMU unavailable ({e}) — dry-run adapter mode"
+                    );
                 }
             }
         }
@@ -192,7 +184,6 @@ pub fn sync_input_adapter(mut integ: ResMut<EmulatorIntegration>) {
     if integ.state != EmulatorState::Running {
         return;
     }
-    // Input adapter drains queues toward transport when present.
     integ.input.flush_to_transport(&mut integ.transport);
 }
 
@@ -207,7 +198,6 @@ pub fn pump_qemu_transport(
         return;
     }
 
-    // Process guest-side requests coming back through the transport.
     let requests = integ.transport.poll_requests();
     for req in requests {
         match req {
@@ -218,6 +208,14 @@ pub fn pump_qemu_transport(
                     len,
                 });
                 let data = integ.memory.read_through_world(&memory, addr, len);
+                println!(
+                    "[Path][Memory] world READ {:#x} len={} -> {}",
+                    addr,
+                    len,
+                    data.as_ref()
+                        .map(|d| format!("{:02x?}", &d[..d.len().min(8)]))
+                        .unwrap_or_else(|| "MISS".into())
+                );
                 integ.transport.complete_memory_read(addr, data);
             }
             super::qemu::GuestRequest::MemoryWrite { addr, data } => {
@@ -226,11 +224,24 @@ pub fn pump_qemu_transport(
                     write: true,
                     len: data.len(),
                 });
-                let _ = integ.memory.write_through_world(&mut memory, addr, &data);
+                let ok = integ.memory.write_through_world(&mut memory, addr, &data);
+                println!(
+                    "[Path][Memory] world WRITE {:#x} len={} ok={ok}",
+                    addr,
+                    data.len()
+                );
             }
-            super::qemu::GuestRequest::StorageRead { entity_bits, lba, count } => {
+            super::qemu::GuestRequest::StorageRead {
+                entity_bits,
+                lba,
+                count,
+            } => {
                 let entity = Entity::from_bits(entity_bits);
                 let data = storage.read_sectors(entity, lba, count);
+                println!(
+                    "[Path][Storage] READ entity={entity:?} lba={lba} count={count} ok={}",
+                    data.is_some()
+                );
                 integ.transport.complete_storage_read(entity_bits, data);
             }
             super::qemu::GuestRequest::StorageWrite {
@@ -239,12 +250,21 @@ pub fn pump_qemu_transport(
                 data,
             } => {
                 let entity = Entity::from_bits(entity_bits);
-                let _ = storage.write_sectors(entity, lba, &data);
+                let ok = storage.write_sectors(entity, lba, &data);
+                println!(
+                    "[Path][Storage] WRITE entity={entity:?} lba={lba} bytes={} ok={ok}",
+                    data.len()
+                );
             }
             super::qemu::GuestRequest::InterruptAck { vector } => {
-                // Acknowledge by draining matching pending entries.
-                let _ = vector;
-                let _ = interrupts.acknowledge();
+                if let Some(pending) = interrupts.acknowledge() {
+                    println!(
+                        "[Path][IRQ] ACK requested vector={vector} got vector={}",
+                        pending.vector
+                    );
+                } else {
+                    println!("[Path][IRQ] ACK vector={vector} (queue empty)");
+                }
             }
         }
     }
