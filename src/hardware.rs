@@ -1,9 +1,20 @@
+//! Virtual hardware that exists entirely inside the physics world.
+//!
+//! Core rule: the physics engine is the single source of truth.
+//! Every hardware component is an independent entity that exists because
+//! the physics simulation contains it. No external system creates, owns,
+//! or simulates these components.
+//!
+//! The future Linux emulator (and any other software) may only interact
+//! with this hardware through the explicit interfaces the hardware itself
+//! exposes (buses, MMIO, interrupt lines, etc.).
+
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-/// Hardware components are independent entities that live in the physics world.
-/// They are never owned by the emulator. The emulator only talks to them through
-/// explicit bus / interface components and systems.
+// ---------------------------------------------------------------------------
+// Common identity for any piece of virtual hardware
+// ---------------------------------------------------------------------------
 
 #[derive(Component)]
 pub struct HardwareComponent {
@@ -20,7 +31,8 @@ pub enum ComponentStatus {
 }
 
 // ---------------------------------------------------------------------------
-// Individual hardware components (each is its own physics entity)
+// Concrete hardware components
+// Each is an independent entity that lives inside the physics simulation.
 // ---------------------------------------------------------------------------
 
 #[derive(Component)]
@@ -53,57 +65,58 @@ pub struct Mouse;
 #[derive(Component)]
 pub struct PowerButton;
 
+#[derive(Component)]
+pub struct PowerSupply;
+
+// Future devices (network cards, additional storage, sensors, …) follow
+// the same pattern: independent entities inside the physics world.
+
 // ---------------------------------------------------------------------------
-// Bus / Interface layer – the ONLY way the emulator (or any other system)
-// may interact with hardware.
+// Interfaces exposed by hardware
+// These are the only channels through which software may interact with
+// the hardware. They themselves exist as components inside the same world.
 // ---------------------------------------------------------------------------
 
-/// A shared data / power bus that hardware components and the emulator
-/// can read from / write to. This is a pure communication channel.
+/// Shared data / power channel.
 #[derive(Component)]
 pub struct VirtualBus {
     pub data: Vec<u8>,
     pub address: u64,
 }
 
-/// Memory-mapped I/O region. Hardware exposes registers here;
-/// the emulator reads/writes them without ever owning the hardware entity.
+/// Memory-mapped register space that hardware publishes.
+/// Software reads and writes here; it never reaches into the hardware entity itself.
 #[derive(Component)]
 pub struct MemoryMappedIo {
     pub base_address: u64,
     pub size: u64,
 }
 
-/// Interrupt line that hardware can raise. Emulator observes these events.
+/// Interrupt line that hardware can raise.
 #[derive(Component)]
 pub struct InterruptLine {
     pub pending: bool,
     pub vector: u8,
 }
 
-/// Marker for any entity that participates in the hardware interface layer.
+/// Marker: this entity participates in the interface layer.
 #[derive(Component)]
 pub struct BusParticipant;
 
-// ---------------------------------------------------------------------------
-// Trait for components that can talk on a bus (implemented by both hardware
-// and the future emulator side). No ownership transfer occurs.
-// ---------------------------------------------------------------------------
-
+/// Common communication contract (no ownership transfer).
 pub trait BusCommunicator {
     fn read(&self, address: u64, len: usize) -> Option<Vec<u8>>;
     fn write(&mut self, address: u64, data: &[u8]) -> bool;
 }
 
 // ---------------------------------------------------------------------------
-// Spawning – all hardware is created as independent physics entities.
+// Spawning
+// All hardware is born inside the physics world as independent entities.
 // ---------------------------------------------------------------------------
 
 pub fn spawn_virtual_computer(mut commands: Commands) {
-    // Each component is an independent entity with its own RigidBody / Collider.
-    // They are linked only by bus / interface components, never by ownership.
-
-    // Example skeleton (meshes & full colliders will be added later):
+    // Example: the case itself is a physics object.
+    // Additional components (motherboard, CPU, …) will be spawned the same way.
     commands.spawn((
         Name::new("ComputerCase"),
         ComputerCase,
@@ -117,9 +130,11 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         BusParticipant,
     ));
 
-    // Motherboard, CPU, RAM, GPU, Storage, Monitor, Keyboard, Mouse,
-    // PowerButton would be spawned the same way – each as its own entity.
+    // TODO: spawn Motherboard, Cpu, Ram, Gpu, Storage, Monitor,
+    //       Keyboard, Mouse, PowerButton, PowerSupply, cables, etc.
+    //       Each as its own independent physics entity that exposes
+    //       the interfaces it needs.
 
-    println!("Virtual computer hardware spawned as independent physics entities.");
-    println!("Emulator will communicate only through VirtualBus / MemoryMappedIo / InterruptLine.");
+    println!("Virtual computer exists as independent entities inside the physics world.");
+    println!("Software will interact with it only through the interfaces those entities expose.");
 }
