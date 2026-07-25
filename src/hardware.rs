@@ -1,38 +1,23 @@
-//! Virtual hardware that exists entirely inside the physics world.
+//! Virtual hardware entities that exist inside the physics world.
 //!
-//! Core rule: the physics engine is the single source of truth.
-//! Every hardware component is an independent entity that exists because
-//! the physics simulation contains it. No external system creates, owns,
-//! or simulates these components.
-//!
-//! The future Linux emulator (and any other software) may only interact
-//! with this hardware through the explicit interfaces the hardware itself
-//! exposes (buses, MMIO, interrupt lines, etc.).
+//! Each component is an independent entity. On spawn it carries a
+//! `RegisterDevice` component so the world systems automatically
+//! discover and enroll it. Authoritative state lives in the world
+//! systems (power, clock, registry, buses, …), not in isolated
+//! per-component fields.
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-// ---------------------------------------------------------------------------
-// Common identity for any piece of virtual hardware
-// ---------------------------------------------------------------------------
-
-#[derive(Component)]
-pub struct HardwareComponent {
-    pub name: String,
-    pub status: ComponentStatus,
-}
-
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub enum ComponentStatus {
-    PoweredOff,
-    Idle,
-    Active,
-    Error,
-}
+use crate::world::devices::{DeviceKind, RegisterDevice};
+use crate::world::power::PoweredDevice;
+use crate::world::clock::ClockedDevice;
+use crate::world::buses::{BusAttachment, BusId};
+use crate::world::memory::MemoryMappedRegion;
+use crate::world::interrupts::InterruptSource;
 
 // ---------------------------------------------------------------------------
-// Concrete hardware components
-// Each is an independent entity that lives inside the physics simulation.
+// Hardware identity markers (independent physics entities)
 // ---------------------------------------------------------------------------
 
 #[derive(Component)]
@@ -68,73 +53,208 @@ pub struct PowerButton;
 #[derive(Component)]
 pub struct PowerSupply;
 
-// Future devices (network cards, additional storage, sensors, …) follow
-// the same pattern: independent entities inside the physics world.
-
 // ---------------------------------------------------------------------------
-// Interfaces exposed by hardware
-// These are the only channels through which software may interact with
-// the hardware. They themselves exist as components inside the same world.
-// ---------------------------------------------------------------------------
-
-/// Shared data / power channel.
-#[derive(Component)]
-pub struct VirtualBus {
-    pub data: Vec<u8>,
-    pub address: u64,
-}
-
-/// Memory-mapped register space that hardware publishes.
-/// Software reads and writes here; it never reaches into the hardware entity itself.
-#[derive(Component)]
-pub struct MemoryMappedIo {
-    pub base_address: u64,
-    pub size: u64,
-}
-
-/// Interrupt line that hardware can raise.
-#[derive(Component)]
-pub struct InterruptLine {
-    pub pending: bool,
-    pub vector: u8,
-}
-
-/// Marker: this entity participates in the interface layer.
-#[derive(Component)]
-pub struct BusParticipant;
-
-/// Common communication contract (no ownership transfer).
-pub trait BusCommunicator {
-    fn read(&self, address: u64, len: usize) -> Option<Vec<u8>>;
-    fn write(&mut self, address: u64, data: &[u8]) -> bool;
-}
-
-// ---------------------------------------------------------------------------
-// Spawning
-// All hardware is born inside the physics world as independent entities.
+// Spawning the virtual computer as independent entities inside the world
 // ---------------------------------------------------------------------------
 
 pub fn spawn_virtual_computer(mut commands: Commands) {
-    // Example: the case itself is a physics object.
-    // Additional components (motherboard, CPU, …) will be spawned the same way.
+    // Case
     commands.spawn((
         Name::new("ComputerCase"),
         ComputerCase,
-        HardwareComponent {
+        RegisterDevice {
             name: "Case".into(),
-            status: ComponentStatus::PoweredOff,
+            kind: DeviceKind::Case,
         },
+        PoweredDevice { wattage: 5.0 },
         RigidBody::Dynamic,
         Collider::cuboid(0.4, 0.6, 0.25),
         Transform::from_xyz(0.0, 1.0, 0.0),
-        BusParticipant,
     ));
 
-    // TODO: spawn Motherboard, Cpu, Ram, Gpu, Storage, Monitor,
-    //       Keyboard, Mouse, PowerButton, PowerSupply, cables, etc.
-    //       Each as its own independent physics entity that exposes
-    //       the interfaces it needs.
+    // Motherboard
+    commands.spawn((
+        Name::new("Motherboard"),
+        Motherboard,
+        RegisterDevice {
+            name: "Motherboard".into(),
+            kind: DeviceKind::Motherboard,
+        },
+        PoweredDevice { wattage: 15.0 },
+        BusAttachment {
+            buses: vec![BusId::System, BusId::Memory, BusId::Io],
+        },
+        RigidBody::Dynamic,
+        Collider::cuboid(0.3, 0.02, 0.25),
+        Transform::from_xyz(0.0, 0.9, 0.0),
+    ));
 
-    println!("Virtual computer exists as independent entities inside the physics world.");
-    println!("Software will interact with it only through the interfaces those entities expose.");
+    // CPU
+    commands.spawn((
+        Name::new("CPU"),
+        Cpu,
+        RegisterDevice {
+            name: "CPU".into(),
+            kind: DeviceKind::Cpu,
+        },
+        PoweredDevice { wattage: 65.0 },
+        ClockedDevice { hz: 3_000_000_000 },
+        BusAttachment {
+            buses: vec![BusId::System, BusId::Memory],
+        },
+        InterruptSource { default_vector: 0 },
+        MemoryMappedRegion {
+            base: 0x0000_0000,
+            size: 0x1000,
+        },
+        RigidBody::Dynamic,
+        Collider::cuboid(0.04, 0.01, 0.04),
+        Transform::from_xyz(0.0, 0.95, 0.0),
+    ));
+
+    // RAM
+    commands.spawn((
+        Name::new("RAM"),
+        Ram,
+        RegisterDevice {
+            name: "RAM".into(),
+            kind: DeviceKind::Ram,
+        },
+        PoweredDevice { wattage: 8.0 },
+        BusAttachment {
+            buses: vec![BusId::Memory],
+        },
+        MemoryMappedRegion {
+            base: 0x0010_0000,
+            size: 0x1000_0000, // 256 MiB abstract window
+        },
+        RigidBody::Dynamic,
+        Collider::cuboid(0.12, 0.02, 0.03),
+        Transform::from_xyz(0.15, 0.95, 0.05),
+    ));
+
+    // GPU
+    commands.spawn((
+        Name::new("GPU"),
+        Gpu,
+        RegisterDevice {
+            name: "GPU".into(),
+            kind: DeviceKind::Gpu,
+        },
+        PoweredDevice { wattage: 150.0 },
+        ClockedDevice { hz: 1_500_000_000 },
+        BusAttachment {
+            buses: vec![BusId::System, BusId::Memory],
+        },
+        MemoryMappedRegion {
+            base: 0xE000_0000,
+            size: 0x1000_0000,
+        },
+        InterruptSource { default_vector: 16 },
+        RigidBody::Dynamic,
+        Collider::cuboid(0.25, 0.04, 0.12),
+        Transform::from_xyz(0.0, 0.7, 0.1),
+    ));
+
+    // Storage
+    commands.spawn((
+        Name::new("Storage"),
+        Storage,
+        RegisterDevice {
+            name: "Storage".into(),
+            kind: DeviceKind::Storage,
+        },
+        PoweredDevice { wattage: 6.0 },
+        BusAttachment {
+            buses: vec![BusId::Io],
+        },
+        MemoryMappedRegion {
+            base: 0xF000_0000,
+            size: 0x1000,
+        },
+        InterruptSource { default_vector: 14 },
+        RigidBody::Dynamic,
+        Collider::cuboid(0.1, 0.02, 0.07),
+        Transform::from_xyz(-0.15, 0.6, 0.0),
+    ));
+
+    // Monitor
+    commands.spawn((
+        Name::new("Monitor"),
+        Monitor,
+        RegisterDevice {
+            name: "Monitor".into(),
+            kind: DeviceKind::Monitor,
+        },
+        PoweredDevice { wattage: 30.0 },
+        RigidBody::Dynamic,
+        Collider::cuboid(0.3, 0.25, 0.05),
+        Transform::from_xyz(0.0, 1.4, -0.6),
+    ));
+
+    // Keyboard
+    commands.spawn((
+        Name::new("Keyboard"),
+        Keyboard,
+        RegisterDevice {
+            name: "Keyboard".into(),
+            kind: DeviceKind::Keyboard,
+        },
+        PoweredDevice { wattage: 1.0 },
+        BusAttachment {
+            buses: vec![BusId::Io],
+        },
+        InterruptSource { default_vector: 1 },
+        RigidBody::Dynamic,
+        Collider::cuboid(0.22, 0.02, 0.08),
+        Transform::from_xyz(0.0, 0.85, 0.5),
+    ));
+
+    // Mouse
+    commands.spawn((
+        Name::new("Mouse"),
+        Mouse,
+        RegisterDevice {
+            name: "Mouse".into(),
+            kind: DeviceKind::Mouse,
+        },
+        PoweredDevice { wattage: 0.5 },
+        BusAttachment {
+            buses: vec![BusId::Io],
+        },
+        InterruptSource { default_vector: 12 },
+        RigidBody::Dynamic,
+        Collider::cuboid(0.03, 0.02, 0.05),
+        Transform::from_xyz(0.3, 0.85, 0.5),
+    ));
+
+    // Power button
+    commands.spawn((
+        Name::new("PowerButton"),
+        PowerButton,
+        RegisterDevice {
+            name: "PowerButton".into(),
+            kind: DeviceKind::PowerButton,
+        },
+        RigidBody::Dynamic,
+        Collider::cuboid(0.015, 0.015, 0.01),
+        Transform::from_xyz(0.35, 1.1, 0.26),
+    ));
+
+    // Power supply
+    commands.spawn((
+        Name::new("PowerSupply"),
+        PowerSupply,
+        RegisterDevice {
+            name: "PowerSupply".into(),
+            kind: DeviceKind::PowerSupply,
+        },
+        PoweredDevice { wattage: 10.0 },
+        RigidBody::Dynamic,
+        Collider::cuboid(0.15, 0.1, 0.15),
+        Transform::from_xyz(0.0, 0.4, -0.1),
+    ));
+
+    println!("Virtual computer spawned as independent entities inside the physics world.");
+    println!("Each device will auto-register with the world systems.");
 }

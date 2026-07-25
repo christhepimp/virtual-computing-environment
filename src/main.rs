@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
-use virtual_computing_environment::{setup_physics, setup_room, spawn_virtual_computer};
+
+use virtual_computing_environment::{
+    setup_physics, setup_room, spawn_virtual_computer, VirtualComputerPlugin,
+};
 
 fn main() {
     App::new()
@@ -13,24 +16,28 @@ fn main() {
         }))
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(RapierDebugRenderPlugin::default())
-        .add_systems(Startup, (setup, setup_physics, setup_room, spawn_virtual_computer))
+        // World systems: power, clock, devices, buses, signals,
+        // memory map, interrupts, connections
+        .add_plugins(VirtualComputerPlugin)
+        .add_systems(
+            Startup,
+            (setup, setup_physics, setup_room, spawn_virtual_computer).chain(),
+        )
         .run();
 }
 
 fn setup(mut commands: Commands) {
-    // Camera
     commands.spawn(Camera3dBundle {
-        transform: Transform::from_xyz(-15.0, 8.0, 15.0).looking_at(Vec3::new(0.0, 2.0, 0.0), Vec3::Y),
+        transform: Transform::from_xyz(-15.0, 8.0, 15.0)
+            .looking_at(Vec3::new(0.0, 2.0, 0.0), Vec3::Y),
         ..default()
     });
 
-    // Ambient light for eerie atmosphere
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.6, 0.5, 0.7), // Dim, slightly purple eerie tone
+        color: Color::srgb(0.6, 0.5, 0.7),
         brightness: 0.3,
     });
 
-    // Directional light for shadows
     commands.spawn(DirectionalLightBundle {
         directional_light: DirectionalLight {
             illuminance: 1000.0,
@@ -40,6 +47,6 @@ fn setup(mut commands: Commands) {
         ..default()
     });
 
-    println!("Virtual Computing Environment - Foundation initialized.");
-    println!("Physics engine controls the world. Hardware components modular and ready for expansion.");
+    println!("Virtual Computing Environment");
+    println!("Physics world is the active runtime of the virtual computer.");
 }

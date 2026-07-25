@@ -1,25 +1,35 @@
 # TODO
 
-## Foundation (current focus)
+## Done (world infrastructure)
 
-- [ ] Room geometry and atmosphere that live inside the physics world
-- [ ] Full set of independent hardware entities (motherboard, CPU, RAM, GPU, storage, monitor, keyboard, mouse, PSU, cables)
-- [ ] Each hardware entity exposes the interfaces it needs (bus, MMIO, interrupts, power)
-- [ ] Basic interaction (raycast / grab / power button)
-- [ ] Minimal power and signal flow through the interface layer
+- [x] Power system (world authority)
+- [x] Clock system
+- [x] Device discovery & registration
+- [x] Virtual buses
+- [x] Signals
+- [x] Memory mapping
+- [x] Interrupts
+- [x] Device connections
+- [x] Hardware entities auto-register with world systems
 
-## Next
+## Next foundation steps
 
-- [ ] First non-owning emulator stub that only talks to the interfaces
-- [ ] Visual and physical feedback when hardware state changes
-- [ ] Eerie effects (flicker, dust, subtle audio) as part of the same world
+- [ ] Room geometry that lives inside the physics world
+- [ ] Richer meshes / colliders for each hardware component
+- [ ] Power-button interaction → PowerSystem.main_power toggle
+- [ ] Wire MemoryMappedRegion components into MemoryMapSystem on registration
+- [ ] Wire BusAttachment into BusSystem on registration
+- [ ] Basic signal routing (reset, power-good)
 
-## Long-term research directions
+## Later
 
-- Physical disassembly and reassembly of the virtual computer
-- Novel bus or interconnect experiments introduced as new entities
-- Multiple guest software stacks on the same hardware
-- Treating heat, power integrity, or signal quality as first-class physical phenomena
-- Observing the emulator process itself as something that exists inside the room
+- [ ] First non-owning emulator stub that only talks to world systems
+- [ ] Visual / physical feedback for power and activity state
+- [ ] Eerie atmosphere effects as part of the same world
 
-All work remains inside the single reality defined by the physics engine.
+## Research directions (still inside the physics world)
+
+- Physical disassembly / reassembly
+- New bus or interconnect entities
+- Multiple guest software stacks
+- Heat / power integrity as simulated phenomena
