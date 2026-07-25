@@ -4,6 +4,7 @@ use bevy_rapier3d::prelude::*;
 use virtual_computing_environment::{
     setup_physics, setup_room, spawn_virtual_computer, VirtualComputerPlugin,
 };
+use virtual_computing_environment::world::power::{PowerEvent, PowerSystem};
 
 fn main() {
     App::new()
@@ -16,12 +17,17 @@ fn main() {
         }))
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(RapierDebugRenderPlugin::default())
-        // World systems: power, clock, devices, buses, signals,
-        // memory map, interrupts, connections
         .add_plugins(VirtualComputerPlugin)
         .add_systems(
             Startup,
-            (setup, setup_physics, setup_room, spawn_virtual_computer).chain(),
+            (
+                setup,
+                setup_physics,
+                setup_room,
+                spawn_virtual_computer,
+                apply_power_on,
+            )
+                .chain(),
         )
         .run();
 }
@@ -49,4 +55,10 @@ fn setup(mut commands: Commands) {
 
     println!("Virtual Computing Environment");
     println!("Physics world is the active runtime of the virtual computer.");
+}
+
+/// Foundation convenience: apply main power after devices spawn so firmware runs.
+fn apply_power_on(mut power: ResMut<PowerSystem>, mut events: EventWriter<PowerEvent>) {
+    power.set_main_power(true, &mut events);
+    println!("Main power applied — firmware will initialize the machine.");
 }

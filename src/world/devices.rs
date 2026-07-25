@@ -1,13 +1,18 @@
 //! Device discovery and registration.
 //!
 //! Every hardware component that exists in the physics world automatically
-//! registers here. The registry is the single source of truth for which
-//! devices exist and their world-level identity.
+//! registers here. On registration, interface components are wired into
+//! the corresponding world systems (buses, memory map, storage, clocks).
 
 use bevy::prelude::*;
 use std::collections::HashMap;
 
-/// Unique world-level identity for a registered device.
+use super::buses::{BusAttachment, BusSystem};
+use super::clock::{ClockedDevice, ClockSystem};
+use super::memory::{MemoryMapSystem, MemoryMappedRegion};
+use super::power::PowerSystem;
+use super::storage::{BlockStorage, StorageSystem};
+
 #[derive(Clone, Debug)]
 pub struct DeviceInfo {
     pub entity: Entity,
@@ -85,32 +90,62 @@ pub struct DeviceUnregistered {
     pub entity: Entity,
 }
 
-/// Component placed on a hardware entity so the world can discover and register it.
-/// Adding this component is how new hardware joins the virtual computer.
 #[derive(Component)]
 pub struct RegisterDevice {
     pub name: String,
     pub kind: DeviceKind,
 }
 
-/// Internal marker once registration has occurred.
 #[derive(Component)]
 pub struct Registered;
 
-/// Discover entities that request registration and enroll them in the world systems.
 pub fn register_new_devices(
     mut commands: Commands,
     mut registry: ResMut<DeviceRegistry>,
-    mut power: ResMut<super::power::PowerSystem>,
-    mut clock: ResMut<super::clock::ClockSystem>,
+    mut power: ResMut<PowerSystem>,
+    mut clock: ResMut<ClockSystem>,
+    mut buses: ResMut<BusSystem>,
+    mut memory: ResMut<MemoryMapSystem>,
+    mut storage: ResMut<StorageSystem>,
     mut events: EventWriter<DeviceRegistered>,
-    query: Query<(Entity, &RegisterDevice), Without<Registered>>,
+    query: Query<
+        (
+            Entity,
+            &RegisterDevice,
+            Option<&BusAttachment>,
+            Option<&MemoryMappedRegion>,
+            Option<&ClockedDevice>,
+            Option<&BlockStorage>,
+        ),
+        Without<Registered>,
+    >,
 ) {
-    for (entity, req) in query.iter() {
+    for (entity, req, bus_att, mmio, clocked, block) in query.iter() {
         registry.register(entity, req.name.clone(), req.kind);
         power.set_device_power(entity, false);
-        // Default clock domain; specific devices can override later.
-        clock.register_device(entity, 0);
+
+        let hz = clocked.map(|c| c.hz).unwrap_or(0);
+        clock.register_device(entity, hz);
+
+        if let Some(att) = bus_att {
+            for &bus_id in &att.buses {
+                buses.attach(bus_id, entity);
+            }
+        }
+
+        if let Some(region) = mmio {
+            memory.map(
+                region.base,
+                region.size,
+                entity,
+                req.name.clone(),
+                region.is_ram,
+            );
+        }
+
+        if let Some(bs) = block {
+            storage.register(entity, bs.sector_count);
+        }
 
         commands.entity(entity).insert(Registered);
 
@@ -127,11 +162,12 @@ pub fn register_new_devices(
     }
 }
 
-/// Clean up when a registered device is removed from the world.
 pub fn unregister_removed_devices(
     mut registry: ResMut<DeviceRegistry>,
-    mut power: ResMut<super::power::PowerSystem>,
-    mut clock: ResMut<super::clock::ClockSystem>,
+    mut power: ResMut<PowerSystem>,
+    mut clock: ResMut<ClockSystem>,
+    mut memory: ResMut<MemoryMapSystem>,
+    mut storage: ResMut<StorageSystem>,
     mut events: EventWriter<DeviceUnregistered>,
     mut removed: RemovedComponents<Registered>,
 ) {
@@ -139,6 +175,8 @@ pub fn unregister_removed_devices(
         registry.unregister(entity);
         power.device_power.remove(&entity);
         clock.unregister_device(entity);
+        memory.unmap_owner(entity);
+        storage.unregister(entity);
         events.send(DeviceUnregistered { entity });
         println!("Device unregistered: {:?}", entity);
     }

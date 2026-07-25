@@ -1,24 +1,22 @@
-//! Virtual hardware entities that exist inside the physics world.
+//! Virtual hardware entities inside the physics world.
 //!
-//! Each component is an independent entity. On spawn it carries a
-//! `RegisterDevice` component so the world systems automatically
-//! discover and enroll it. Authoritative state lives in the world
-//! systems (power, clock, registry, buses, …), not in isolated
-//! per-component fields.
+//! Each component is independent. On spawn it carries RegisterDevice and
+//! interface components so world systems enroll it automatically.
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-use crate::world::devices::{DeviceKind, RegisterDevice};
-use crate::world::power::PoweredDevice;
-use crate::world::clock::ClockedDevice;
 use crate::world::buses::{BusAttachment, BusId};
-use crate::world::memory::MemoryMappedRegion;
+use crate::world::clock::ClockedDevice;
+use crate::world::controllers::{
+    GpuController, KeyboardController, MouseController, StorageController,
+};
+use crate::world::cpu::CpuCore;
+use crate::world::devices::{DeviceKind, RegisterDevice};
 use crate::world::interrupts::InterruptSource;
-
-// ---------------------------------------------------------------------------
-// Hardware identity markers (independent physics entities)
-// ---------------------------------------------------------------------------
+use crate::world::memory::MemoryMappedRegion;
+use crate::world::power::PoweredDevice;
+use crate::world::storage::BlockStorage;
 
 #[derive(Component)]
 pub struct ComputerCase;
@@ -53,12 +51,7 @@ pub struct PowerButton;
 #[derive(Component)]
 pub struct PowerSupply;
 
-// ---------------------------------------------------------------------------
-// Spawning the virtual computer as independent entities inside the world
-// ---------------------------------------------------------------------------
-
 pub fn spawn_virtual_computer(mut commands: Commands) {
-    // Case
     commands.spawn((
         Name::new("ComputerCase"),
         ComputerCase,
@@ -72,7 +65,6 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         Transform::from_xyz(0.0, 1.0, 0.0),
     ));
 
-    // Motherboard
     commands.spawn((
         Name::new("Motherboard"),
         Motherboard,
@@ -89,10 +81,10 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         Transform::from_xyz(0.0, 0.9, 0.0),
     ));
 
-    // CPU
     commands.spawn((
         Name::new("CPU"),
         Cpu,
+        CpuCore::default(),
         RegisterDevice {
             name: "CPU".into(),
             kind: DeviceKind::Cpu,
@@ -104,15 +96,15 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         },
         InterruptSource { default_vector: 0 },
         MemoryMappedRegion {
-            base: 0x0000_0000,
+            base: 0xFEE0_0000, // local APIC-like window placeholder
             size: 0x1000,
+            is_ram: false,
         },
         RigidBody::Dynamic,
         Collider::cuboid(0.04, 0.01, 0.04),
         Transform::from_xyz(0.0, 0.95, 0.0),
     ));
 
-    // RAM
     commands.spawn((
         Name::new("RAM"),
         Ram,
@@ -126,17 +118,22 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         },
         MemoryMappedRegion {
             base: 0x0010_0000,
-            size: 0x1000_0000, // 256 MiB abstract window
+            size: 16 * 1024 * 1024, // 16 MiB foundation window
+            is_ram: true,
         },
         RigidBody::Dynamic,
         Collider::cuboid(0.12, 0.02, 0.03),
         Transform::from_xyz(0.15, 0.95, 0.05),
     ));
 
-    // GPU
     commands.spawn((
         Name::new("GPU"),
         Gpu,
+        GpuController {
+            framebuffer_addr: 0xE000_0000,
+            width: 1024,
+            height: 768,
+        },
         RegisterDevice {
             name: "GPU".into(),
             kind: DeviceKind::Gpu,
@@ -148,7 +145,8 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         },
         MemoryMappedRegion {
             base: 0xE000_0000,
-            size: 0x1000_0000,
+            size: 0x0100_0000,
+            is_ram: false,
         },
         InterruptSource { default_vector: 16 },
         RigidBody::Dynamic,
@@ -156,10 +154,13 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         Transform::from_xyz(0.0, 0.7, 0.1),
     ));
 
-    // Storage
     commands.spawn((
         Name::new("Storage"),
         Storage,
+        StorageController::default(),
+        BlockStorage {
+            sector_count: 2048, // 1 MiB foundation disk
+        },
         RegisterDevice {
             name: "Storage".into(),
             kind: DeviceKind::Storage,
@@ -171,6 +172,7 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         MemoryMappedRegion {
             base: 0xF000_0000,
             size: 0x1000,
+            is_ram: false,
         },
         InterruptSource { default_vector: 14 },
         RigidBody::Dynamic,
@@ -178,7 +180,6 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         Transform::from_xyz(-0.15, 0.6, 0.0),
     ));
 
-    // Monitor
     commands.spawn((
         Name::new("Monitor"),
         Monitor,
@@ -192,10 +193,10 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         Transform::from_xyz(0.0, 1.4, -0.6),
     ));
 
-    // Keyboard
     commands.spawn((
         Name::new("Keyboard"),
         Keyboard,
+        KeyboardController::default(),
         RegisterDevice {
             name: "Keyboard".into(),
             kind: DeviceKind::Keyboard,
@@ -210,10 +211,10 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         Transform::from_xyz(0.0, 0.85, 0.5),
     ));
 
-    // Mouse
     commands.spawn((
         Name::new("Mouse"),
         Mouse,
+        MouseController::default(),
         RegisterDevice {
             name: "Mouse".into(),
             kind: DeviceKind::Mouse,
@@ -228,7 +229,6 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         Transform::from_xyz(0.3, 0.85, 0.5),
     ));
 
-    // Power button
     commands.spawn((
         Name::new("PowerButton"),
         PowerButton,
@@ -241,7 +241,6 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         Transform::from_xyz(0.35, 1.1, 0.26),
     ));
 
-    // Power supply
     commands.spawn((
         Name::new("PowerSupply"),
         PowerSupply,
@@ -255,6 +254,5 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         Transform::from_xyz(0.0, 0.4, -0.1),
     ));
 
-    println!("Virtual computer spawned as independent entities inside the physics world.");
-    println!("Each device will auto-register with the world systems.");
+    println!("Virtual computer spawned. Devices will auto-register with world systems.");
 }

@@ -2,11 +2,6 @@
 //!
 //! These systems manage the entire state of the virtual computer.
 //! They are the single source of truth for all hardware state.
-//! Hardware entities register themselves; they do not maintain
-//! isolated state outside these systems.
-//!
-//! The future Linux emulator will communicate only through the
-//! interfaces and services these world systems provide.
 
 pub mod power;
 pub mod clock;
@@ -16,6 +11,11 @@ pub mod signals;
 pub mod memory;
 pub mod interrupts;
 pub mod connections;
+pub mod storage;
+pub mod firmware;
+pub mod motherboard;
+pub mod cpu;
+pub mod controllers;
 
 use bevy::prelude::*;
 
@@ -27,15 +27,17 @@ use signals::*;
 use memory::*;
 use interrupts::*;
 use connections::*;
+use storage::*;
+use firmware::*;
+use motherboard::*;
+use cpu::*;
+use controllers::*;
 
-/// Plugin that installs all virtual-computer world systems.
-/// Everything runs inside the physics world.
 pub struct VirtualComputerPlugin;
 
 impl Plugin for VirtualComputerPlugin {
     fn build(&self, app: &mut App) {
         app
-            // Core world resources (single source of truth)
             .init_resource::<PowerSystem>()
             .init_resource::<ClockSystem>()
             .init_resource::<DeviceRegistry>()
@@ -44,18 +46,21 @@ impl Plugin for VirtualComputerPlugin {
             .init_resource::<MemoryMapSystem>()
             .init_resource::<InterruptSystem>()
             .init_resource::<ConnectionSystem>()
-            // Events
+            .init_resource::<StorageSystem>()
+            .init_resource::<Firmware>()
             .add_event::<DeviceRegistered>()
             .add_event::<DeviceUnregistered>()
             .add_event::<PowerEvent>()
             .add_event::<SignalEvent>()
             .add_event::<InterruptEvent>()
             .add_event::<ConnectionEvent>()
-            // Systems
+            .add_event::<BusTransactionCompleted>()
+            .add_event::<StorageIoEvent>()
             .add_systems(Startup, initialize_world_systems)
             .add_systems(
                 Update,
                 (
+                    // Discovery & infrastructure
                     register_new_devices,
                     unregister_removed_devices,
                     power_tick,
@@ -63,6 +68,14 @@ impl Plugin for VirtualComputerPlugin {
                     process_signals,
                     process_interrupts,
                     update_connections,
+                    // Machine behavior
+                    firmware_tick,
+                    motherboard_bus_router,
+                    cpu_tick,
+                    keyboard_controller_tick,
+                    mouse_controller_tick,
+                    storage_controller_tick,
+                    gpu_controller_tick,
                 ),
             );
     }

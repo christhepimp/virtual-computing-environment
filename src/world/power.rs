@@ -1,19 +1,12 @@
 //! Power system — world-level authority for power state.
-//!
-//! Hardware does not store its own authoritative power state.
-//! It queries and reacts through this system.
 
 use bevy::prelude::*;
 use std::collections::HashMap;
 
-/// Global power state managed by the world.
 #[derive(Resource, Default)]
 pub struct PowerSystem {
-    /// Whether main power rail is live.
     pub main_power: bool,
-    /// Per-device power state (entity → powered).
     pub device_power: HashMap<Entity, bool>,
-    /// Available power budget (abstract units for future simulation).
     pub available_watts: f32,
     pub consumed_watts: f32,
 }
@@ -34,8 +27,20 @@ impl PowerSystem {
         self.device_power.insert(entity, powered);
     }
 
-    pub fn toggle_main_power(&mut self) {
-        self.main_power = !self.main_power;
+    pub fn set_main_power(&mut self, on: bool, events: &mut EventWriter<PowerEvent>) {
+        if self.main_power == on {
+            return;
+        }
+        self.main_power = on;
+        if on {
+            events.send(PowerEvent::MainPowerOn);
+        } else {
+            events.send(PowerEvent::MainPowerOff);
+        }
+    }
+
+    pub fn toggle_main_power(&mut self, events: &mut EventWriter<PowerEvent>) {
+        self.set_main_power(!self.main_power, events);
     }
 }
 
@@ -47,7 +52,6 @@ pub enum PowerEvent {
     DeviceUnpowered(Entity),
 }
 
-/// Marker: this entity draws power and participates in the power system.
 #[derive(Component, Default)]
 pub struct PoweredDevice {
     pub wattage: f32,
@@ -55,10 +59,8 @@ pub struct PoweredDevice {
 
 pub fn power_tick(
     mut power: ResMut<PowerSystem>,
-    mut events: EventWriter<PowerEvent>,
     query: Query<(Entity, &PoweredDevice)>,
 ) {
-    // Recompute consumption from currently registered powered devices.
     let mut total = 0.0;
     for (entity, device) in query.iter() {
         if power.is_powered(entity) {
@@ -66,7 +68,4 @@ pub fn power_tick(
         }
     }
     power.consumed_watts = total;
-
-    // Future: thermal, brown-out, etc. can be driven from here.
-    let _ = events;
 }

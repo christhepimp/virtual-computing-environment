@@ -1,35 +1,27 @@
 # TODO
 
-## Done (world infrastructure)
+## Done
 
-- [x] Power system (world authority)
-- [x] Clock system
-- [x] Device discovery & registration
-- [x] Virtual buses
-- [x] Signals
-- [x] Memory mapping
-- [x] Interrupts
-- [x] Device connections
-- [x] Hardware entities auto-register with world systems
+- [x] World systems (power, clock, registry, buses, signals, memory, interrupts, connections)
+- [x] Auto-registration of hardware entities
+- [x] Bus transactions (read/write cycles)
+- [x] RAM backing store + memory map
+- [x] Block storage interface
+- [x] Firmware POST / discovery / init sequence
+- [x] Motherboard bus routing
+- [x] CPU issues memory reads via bus
+- [x] Device controllers (keyboard, mouse, GPU, storage)
 
-## Next foundation steps
+## Next
 
-- [ ] Room geometry that lives inside the physics world
-- [ ] Richer meshes / colliders for each hardware component
-- [ ] Power-button interaction → PowerSystem.main_power toggle
-- [ ] Wire MemoryMappedRegion components into MemoryMapSystem on registration
-- [ ] Wire BusAttachment into BusSystem on registration
-- [ ] Basic signal routing (reset, power-good)
+- [ ] Power button interaction toggles PowerSystem
+- [ ] Richer MMIO handlers for storage/GPU/keyboard controllers
+- [ ] Interrupt delivery into CPU core
+- [ ] Firmware hand-off vector / reset vector for guest software
+- [ ] Room geometry inside the physics world
 
 ## Later
 
-- [ ] First non-owning emulator stub that only talks to world systems
-- [ ] Visual / physical feedback for power and activity state
-- [ ] Eerie atmosphere effects as part of the same world
-
-## Research directions (still inside the physics world)
-
-- Physical disassembly / reassembly
-- New bus or interconnect entities
-- Multiple guest software stacks
-- Heat / power integrity as simulated phenomena
+- [ ] Non-owning Linux emulator stub using only hardware interfaces
+- [ ] Multiple CPUs / APIC-style interrupt routing
+- [ ] DMA-style transfers through the bus system

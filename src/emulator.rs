@@ -1,48 +1,48 @@
 //! Future Linux emulator.
 //!
-//! The emulator runs as software *inside* the virtual computer.
-//! It never owns, creates, or simulates hardware.
+//! Runs as software inside the virtual computer. Communicates only through:
+//!   - Bus transactions (BusSystem)
+//!   - Memory map / RAM (MemoryMapSystem)
+//!   - Interrupts (InterruptSystem)
+//!   - Power / clock / signals
+//!   - Device registry (discovery)
+//!   - Storage block interface (StorageSystem)
 //!
-//! All interaction happens through the world systems and the interfaces
-//! that hardware entities expose:
-//!   - PowerSystem, ClockSystem
-//!   - DeviceRegistry
-//!   - BusSystem, SignalSystem
-//!   - MemoryMapSystem, InterruptSystem
-//!   - ConnectionSystem
-//!
-//! This module remains a non-owning placeholder until a later stage.
+//! Never owns or simulates hardware.
 
 use bevy::prelude::*;
 
 use crate::world::buses::BusSystem;
-use crate::world::memory::MemoryMapSystem;
-use crate::world::interrupts::InterruptSystem;
-use crate::world::devices::DeviceRegistry;
-use crate::world::power::PowerSystem;
 use crate::world::clock::ClockSystem;
+use crate::world::devices::DeviceRegistry;
+use crate::world::firmware::{Firmware, FirmwarePhase};
+use crate::world::interrupts::InterruptSystem;
+use crate::world::memory::MemoryMapSystem;
+use crate::world::power::PowerSystem;
+use crate::world::storage::StorageSystem;
 
-/// Marker for a software process running on the virtual computer.
 #[derive(Component)]
 pub struct EmulatorProcess;
 
-/// Placeholder tick. Future implementation will only touch world systems
-/// and published interfaces — never hardware entities directly as owner.
+/// Placeholder: when firmware reports Ready, guest software may start.
 pub fn emulator_tick(
+    firmware: Res<Firmware>,
     _power: Res<PowerSystem>,
     _clock: Res<ClockSystem>,
     _registry: Res<DeviceRegistry>,
-    _buses: Res<BusSystem>,
-    _memory: Res<MemoryMapSystem>,
+    _buses: ResMut<BusSystem>,
+    _memory: ResMut<MemoryMapSystem>,
     _interrupts: ResMut<InterruptSystem>,
+    _storage: ResMut<StorageSystem>,
 ) {
-    // Intentionally empty — architecture only.
+    if firmware.phase != FirmwarePhase::Ready {
+        return;
+    }
+    // Future: fetch instructions / drive OS via bus + MMIO + IRQs only.
 }
 
 pub struct EmulatorPlugin;
 
 impl Plugin for EmulatorPlugin {
-    fn build(&self, _app: &mut App) {
-        // Will later add: app.add_systems(Update, emulator_tick);
-    }
+    fn build(&self, _app: &mut App) {}
 }
