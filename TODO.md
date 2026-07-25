@@ -2,23 +2,21 @@
 
 ## Done
 
-- [x] World systems & auto-registration
-- [x] Bus transactions, RAM, block storage
-- [x] Firmware POST / discovery
-- [x] Full power lifecycle (button → PSU → rails → PowerGood)
-- [x] Per-device state machines (Offline → Ready / failure on power loss)
-- [x] ClockEnable gated by firmware + device progress
-- [x] Motherboard bus active only when Ready
-- [x] CPU runs only when Ready + firmware Ready
+- [x] World systems, registration, buses, memory, storage
+- [x] Firmware + full power / device lifecycle
+- [x] Emulator Integration Layer (adapters + QEMU transport)
+- [x] Dry-run mode when QEMU binary is absent
+- [x] Minimal machine config for boot experiments
 
 ## Next
 
-- [ ] Interactive power button (input / physics interaction)
-- [ ] MMIO command handlers for storage & GPU controllers
-- [ ] Interrupt delivery into CPU
-- [ ] Reset vector / firmware hand-off for guest software
-- [ ] Disconnect / entity removal reactions beyond power loss
+- [ ] Shared-memory or socket IPC between QEMU and MemoryAdapter
+- [ ] Wire virtio-blk requests into StorageSystem
+- [ ] IRQCHIP-style delivery from InterruptSystem into guest
+- [ ] Optional -kernel boot experiment path end-to-end
+- [ ] Interactive power button
 
 ## Later
 
-- [ ] Linux emulator stub using only hardware interfaces
+- [ ] Richer device set without moving authority out of the world
+- [ ] Display path from GPU controller to DisplayAdapter

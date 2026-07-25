@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
 use virtual_computing_environment::{
-    setup_physics, setup_room, spawn_virtual_computer, VirtualComputerPlugin,
+    setup_physics, setup_room, spawn_virtual_computer, EmulatorPlugin, VirtualComputerPlugin,
 };
 
 fn main() {
@@ -17,6 +17,7 @@ fn main() {
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(RapierDebugRenderPlugin::default())
         .add_plugins(VirtualComputerPlugin)
+        .add_plugins(EmulatorPlugin)
         .add_systems(
             Startup,
             (setup, setup_physics, setup_room, spawn_virtual_computer).chain(),
@@ -46,5 +47,5 @@ fn setup(mut commands: Commands) {
     });
 
     println!("Virtual Computing Environment");
-    println!("Hardware lifecycle runs entirely inside the physics world.");
+    println!("QEMU integration layer active — world remains source of truth.");
 }
