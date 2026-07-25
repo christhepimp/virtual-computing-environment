@@ -1,16 +1,13 @@
 //! Firmware (BIOS/UEFI equivalent).
 //!
-//! Runs before any guest software. Discovers hardware via the DeviceRegistry,
-//! initializes power and clocks, sets up the memory map view, and brings the
-//! machine to a state where an OS can boot.
-//!
-//! Firmware is software that lives inside the virtual computer — it does not
-//! own hardware; it uses the same world interfaces an OS would use.
+//! Runs after PowerGood. Discovers hardware, drives init policy, and only
+//! declares the machine Ready when critical devices report Ready through
+//! their independent state machines.
 
 use bevy::prelude::*;
 
-use super::clock::ClockSystem;
-use super::devices::{DeviceKind, DeviceRegistry};
+use super::devices::{DeviceKind, DeviceRegistry, Registered};
+use super::lifecycle::{DeviceLifecycle, DevicePhase};
 use super::memory::MemoryMapSystem;
 use super::power::{PowerEvent, PowerSystem};
 use super::signals::{SignalId, SignalSystem};
@@ -19,10 +16,12 @@ use super::storage::StorageSystem;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FirmwarePhase {
     Off,
+    WaitPowerGood,
     PowerOnSelfTest,
     DeviceDiscovery,
     MemoryInit,
     StorageInit,
+    DeviceReadyWait,
     Ready,
     Halted,
 }
@@ -44,49 +43,55 @@ impl Default for Firmware {
     }
 }
 
-/// Drive the firmware state machine when main power is applied.
 pub fn firmware_tick(
     mut fw: ResMut<Firmware>,
-    mut power: ResMut<PowerSystem>,
-    mut clock: ResMut<ClockSystem>,
-    mut signals: ResMut<SignalSystem>,
+    power: Res<PowerSystem>,
+    signals: Res<SignalSystem>,
     registry: Res<DeviceRegistry>,
     memory: Res<MemoryMapSystem>,
     storage: Res<StorageSystem>,
+    life_query: Query<(Entity, &DeviceLifecycle), With<Registered>>,
     mut power_events: EventReader<PowerEvent>,
 ) {
     for ev in power_events.read() {
         match ev {
             PowerEvent::MainPowerOn => {
-                if fw.phase == FirmwarePhase::Off || fw.phase == FirmwarePhase::Halted {
-                    fw.phase = FirmwarePhase::PowerOnSelfTest;
-                    println!("[Firmware] Power-on — starting POST");
-                }
+                fw.phase = FirmwarePhase::WaitPowerGood;
+                fw.post_passed = false;
+                fw.boot_device = None;
+                println!("[Firmware] Main power on — waiting for PowerGood");
             }
             PowerEvent::MainPowerOff => {
                 fw.phase = FirmwarePhase::Off;
                 fw.post_passed = false;
                 fw.boot_device = None;
-                signals.deassert(SignalId::PowerGood);
-                signals.deassert(SignalId::ClockEnable);
-                println!("[Firmware] Power-off — halted");
+                println!("[Firmware] Main power off");
             }
             _ => {}
         }
     }
 
     if !power.main_power {
+        if fw.phase != FirmwarePhase::Off {
+            fw.phase = FirmwarePhase::Off;
+        }
         return;
     }
 
     match fw.phase {
+        FirmwarePhase::WaitPowerGood => {
+            if signals.is_asserted(SignalId::PowerGood) {
+                fw.phase = FirmwarePhase::PowerOnSelfTest;
+                println!("[Firmware] PowerGood received — starting POST");
+            }
+        }
         FirmwarePhase::PowerOnSelfTest => {
-            // Minimal POST: require motherboard + CPU + RAM present.
             let has_mb = !registry.devices_of_kind(DeviceKind::Motherboard).is_empty();
             let has_cpu = !registry.devices_of_kind(DeviceKind::Cpu).is_empty();
             let has_ram = !registry.devices_of_kind(DeviceKind::Ram).is_empty();
+            let has_psu = !registry.devices_of_kind(DeviceKind::PowerSupply).is_empty();
 
-            if has_mb && has_cpu && has_ram {
+            if has_mb && has_cpu && has_ram && has_psu {
                 fw.post_passed = true;
                 fw.phase = FirmwarePhase::DeviceDiscovery;
                 println!("[Firmware] POST passed");
@@ -96,26 +101,18 @@ pub fn firmware_tick(
             }
         }
         FirmwarePhase::DeviceDiscovery => {
-            println!("[Firmware] Devices discovered: {}", registry.devices.len());
-            for (entity, info) in registry.devices.iter() {
-                // Power on devices that are part of the machine.
-                power.set_device_power(*entity, true);
-                if let Some(dc) = clock.device_clocks.get_mut(entity) {
-                    dc.enabled = true;
-                }
+            println!("[Firmware] Devices in registry: {}", registry.devices.len());
+            for (_e, info) in registry.devices.iter() {
                 println!("  - {} ({:?})", info.name, info.kind);
             }
             fw.phase = FirmwarePhase::MemoryInit;
         }
         FirmwarePhase::MemoryInit => {
-            println!("[Firmware] Memory map regions: {}", memory.regions.len());
-            for (_, region) in memory.regions.iter() {
+            println!("[Firmware] Memory regions: {}", memory.regions.len());
+            for (_, r) in memory.regions.iter() {
                 println!(
-                    "  - {:#x}..{:#x} {} (ram={})",
-                    region.base,
-                    region.base + region.size,
-                    region.name,
-                    region.is_ram
+                    "  - {:#x}+{:#x} {} ram={}",
+                    r.base, r.size, r.name, r.is_ram
                 );
             }
             fw.phase = FirmwarePhase::StorageInit;
@@ -123,16 +120,35 @@ pub fn firmware_tick(
         FirmwarePhase::StorageInit => {
             println!("[Firmware] Block devices: {}", storage.devices.len());
             for (entity, dev) in storage.devices.iter() {
-                println!("  - {:?}  {} sectors", entity, dev.sectors);
+                println!("  - {:?} ({} sectors)", entity, dev.sectors);
                 if fw.boot_device.is_none() {
                     fw.boot_device = Some(*entity);
                 }
             }
-            // Assert power-good and clock-enable — machine ready for software.
-            signals.assert(SignalId::PowerGood);
-            signals.assert(SignalId::ClockEnable);
-            fw.phase = FirmwarePhase::Ready;
-            println!("[Firmware] Machine ready. Awaiting guest software.");
+            fw.phase = FirmwarePhase::DeviceReadyWait;
+            println!("[Firmware] Waiting for devices to reach Ready");
+        }
+        FirmwarePhase::DeviceReadyWait => {
+            let mut cpu_ready = false;
+            let mut ram_ready = false;
+            let mut mb_ready = false;
+
+            for (entity, life) in life_query.iter() {
+                if let Some(info) = registry.get(entity) {
+                    let ready = life.phase == DevicePhase::Ready;
+                    match info.kind {
+                        DeviceKind::Cpu => cpu_ready |= ready,
+                        DeviceKind::Ram => ram_ready |= ready,
+                        DeviceKind::Motherboard => mb_ready |= ready,
+                        _ => {}
+                    }
+                }
+            }
+
+            if cpu_ready && ram_ready && mb_ready {
+                fw.phase = FirmwarePhase::Ready;
+                println!("[Firmware] Machine READY for guest software");
+            }
         }
         FirmwarePhase::Ready | FirmwarePhase::Off | FirmwarePhase::Halted => {}
     }

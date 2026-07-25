@@ -1,46 +1,38 @@
-//! Motherboard coordination.
-//!
-//! The motherboard routes bus traffic between CPU, memory, and devices.
-//! It does not implement device logic itself — it arbitrates and forwards.
+//! Motherboard bus arbitration — only active when motherboard lifecycle is Ready.
 
 use bevy::prelude::*;
 
 use super::buses::{BusId, BusSystem, BusTransactionCompleted, TransactionKind};
 use super::devices::{DeviceKind, DeviceRegistry, Registered};
+use super::lifecycle::{DeviceLifecycle, DevicePhase};
 use super::memory::MemoryMapSystem;
 use super::power::PowerSystem;
 use crate::hardware::Motherboard;
 
-/// Process pending system/memory/io transactions while power is on.
-/// Memory reads/writes are satisfied from MemoryMapSystem when possible.
-/// Other addresses remain pending for device controllers to claim.
 pub fn motherboard_bus_router(
     power: Res<PowerSystem>,
     registry: Res<DeviceRegistry>,
     mut buses: ResMut<BusSystem>,
     mut memory: ResMut<MemoryMapSystem>,
     mut completed_events: EventWriter<BusTransactionCompleted>,
-    mb_query: Query<Entity, (With<Motherboard>, With<Registered>)>,
+    mb_query: Query<(Entity, &DeviceLifecycle), (With<Motherboard>, With<Registered>)>,
 ) {
     if !power.main_power {
         return;
     }
-    if mb_query.iter().next().is_none() {
-        return;
-    }
-    // Motherboard present and powered — route traffic.
-    let mb_entities = registry.devices_of_kind(DeviceKind::Motherboard);
-    if mb_entities.is_empty() {
-        return;
-    }
-    let mb = mb_entities[0];
-    if !power.is_powered(mb) {
+
+    let mb_ready = mb_query.iter().any(|(e, life)| {
+        power.is_powered(e) && life.phase == DevicePhase::Ready
+    });
+    if !mb_ready {
         return;
     }
 
+    // Buses are active only while motherboard is Ready.
+    let _ = registry.devices_of_kind(DeviceKind::Motherboard);
+
     for bus_id in [BusId::System, BusId::Memory, BusId::Io] {
         while let Some(mut txn) = buses.take_pending(bus_id) {
-            // Try to satisfy from RAM first.
             match txn.kind {
                 TransactionKind::Read => {
                     if let Some(data) = memory.read_ram(txn.address, txn.data.len().max(1)) {
@@ -68,10 +60,7 @@ pub fn motherboard_bus_router(
                 }
             }
 
-            // Not RAM — leave on a side queue for device controllers by re-completing
-            // as incomplete only if we can't handle; for foundation, mark error if
-            // no one claims. Device controllers will get a future pass.
-            // For now, put back as completed with error so requesters don't hang.
+            // No handler yet — complete with error so requesters do not hang.
             txn.completed = true;
             txn.error = true;
             txn.response = None;

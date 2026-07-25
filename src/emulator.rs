@@ -1,14 +1,7 @@
-//! Future Linux emulator.
+//! Future Linux emulator — non-owning guest software.
 //!
-//! Runs as software inside the virtual computer. Communicates only through:
-//!   - Bus transactions (BusSystem)
-//!   - Memory map / RAM (MemoryMapSystem)
-//!   - Interrupts (InterruptSystem)
-//!   - Power / clock / signals
-//!   - Device registry (discovery)
-//!   - Storage block interface (StorageSystem)
-//!
-//! Never owns or simulates hardware.
+//! Starts only when FirmwarePhase::Ready. Uses bus transactions, MMIO,
+//! interrupts, storage blocks, and power/clock signals exclusively.
 
 use bevy::prelude::*;
 
@@ -24,7 +17,6 @@ use crate::world::storage::StorageSystem;
 #[derive(Component)]
 pub struct EmulatorProcess;
 
-/// Placeholder: when firmware reports Ready, guest software may start.
 pub fn emulator_tick(
     firmware: Res<Firmware>,
     _power: Res<PowerSystem>,
@@ -38,7 +30,7 @@ pub fn emulator_tick(
     if firmware.phase != FirmwarePhase::Ready {
         return;
     }
-    // Future: fetch instructions / drive OS via bus + MMIO + IRQs only.
+    // Guest OS entry point will live here.
 }
 
 pub struct EmulatorPlugin;

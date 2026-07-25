@@ -1,7 +1,4 @@
-//! World systems that live inside the physics engine.
-//!
-//! These systems manage the entire state of the virtual computer.
-//! They are the single source of truth for all hardware state.
+//! World systems — single source of truth for machine state.
 
 pub mod power;
 pub mod clock;
@@ -16,6 +13,9 @@ pub mod firmware;
 pub mod motherboard;
 pub mod cpu;
 pub mod controllers;
+pub mod lifecycle;
+pub mod power_sequence;
+pub mod device_fsm;
 
 use bevy::prelude::*;
 
@@ -32,13 +32,14 @@ use firmware::*;
 use motherboard::*;
 use cpu::*;
 use controllers::*;
+use power_sequence::*;
+use device_fsm::*;
 
 pub struct VirtualComputerPlugin;
 
 impl Plugin for VirtualComputerPlugin {
     fn build(&self, app: &mut App) {
-        app
-            .init_resource::<PowerSystem>()
+        app.init_resource::<PowerSystem>()
             .init_resource::<ClockSystem>()
             .init_resource::<DeviceRegistry>()
             .init_resource::<BusSystem>()
@@ -60,15 +61,29 @@ impl Plugin for VirtualComputerPlugin {
             .add_systems(
                 Update,
                 (
-                    // Discovery & infrastructure
+                    // Power path
+                    power_button_system,
+                    power_supply_system,
+                    enforce_rail_power,
+                    power_tick,
+                    // Registration & clocks
                     register_new_devices,
                     unregister_removed_devices,
-                    power_tick,
                     clock_tick,
                     process_signals,
                     process_interrupts,
                     update_connections,
-                    // Machine behavior
+                    // Device state machines
+                    motherboard_fsm,
+                    cpu_fsm,
+                    ram_fsm,
+                    storage_fsm,
+                    gpu_fsm,
+                    keyboard_fsm,
+                    mouse_fsm,
+                    monitor_fsm,
+                    firmware_gate_clocks,
+                    // Firmware & machine services
                     firmware_tick,
                     motherboard_bus_router,
                     cpu_tick,
@@ -89,5 +104,5 @@ fn initialize_world_systems(
     power.initialize();
     clock.initialize();
     registry.initialize();
-    println!("World systems online. Physics world is the active runtime of the virtual computer.");
+    println!("World systems online.");
 }

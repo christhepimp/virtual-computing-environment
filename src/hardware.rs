@@ -1,7 +1,4 @@
 //! Virtual hardware entities inside the physics world.
-//!
-//! Each component is independent. On spawn it carries RegisterDevice and
-//! interface components so world systems enroll it automatically.
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
@@ -14,40 +11,31 @@ use crate::world::controllers::{
 use crate::world::cpu::CpuCore;
 use crate::world::devices::{DeviceKind, RegisterDevice};
 use crate::world::interrupts::InterruptSource;
+use crate::world::lifecycle::{DeviceLifecycle, PowerButtonState, PowerSupplyState};
 use crate::world::memory::MemoryMappedRegion;
 use crate::world::power::PoweredDevice;
 use crate::world::storage::BlockStorage;
 
 #[derive(Component)]
 pub struct ComputerCase;
-
 #[derive(Component)]
 pub struct Motherboard;
-
 #[derive(Component)]
 pub struct Cpu;
-
 #[derive(Component)]
 pub struct Ram;
-
 #[derive(Component)]
 pub struct Gpu;
-
 #[derive(Component)]
 pub struct Storage;
-
 #[derive(Component)]
 pub struct Monitor;
-
 #[derive(Component)]
 pub struct Keyboard;
-
 #[derive(Component)]
 pub struct Mouse;
-
 #[derive(Component)]
 pub struct PowerButton;
-
 #[derive(Component)]
 pub struct PowerSupply;
 
@@ -59,6 +47,7 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
             name: "Case".into(),
             kind: DeviceKind::Case,
         },
+        DeviceLifecycle::new(1),
         PoweredDevice { wattage: 5.0 },
         RigidBody::Dynamic,
         Collider::cuboid(0.4, 0.6, 0.25),
@@ -72,6 +61,7 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
             name: "Motherboard".into(),
             kind: DeviceKind::Motherboard,
         },
+        DeviceLifecycle::new(5),
         PoweredDevice { wattage: 15.0 },
         BusAttachment {
             buses: vec![BusId::System, BusId::Memory, BusId::Io],
@@ -84,11 +74,15 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
     commands.spawn((
         Name::new("CPU"),
         Cpu,
-        CpuCore::default(),
+        CpuCore {
+            program_counter: 0x0010_0000,
+            ..default()
+        },
         RegisterDevice {
             name: "CPU".into(),
             kind: DeviceKind::Cpu,
         },
+        DeviceLifecycle::new(8),
         PoweredDevice { wattage: 65.0 },
         ClockedDevice { hz: 3_000_000_000 },
         BusAttachment {
@@ -96,7 +90,7 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         },
         InterruptSource { default_vector: 0 },
         MemoryMappedRegion {
-            base: 0xFEE0_0000, // local APIC-like window placeholder
+            base: 0xFEE0_0000,
             size: 0x1000,
             is_ram: false,
         },
@@ -112,13 +106,14 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
             name: "RAM".into(),
             kind: DeviceKind::Ram,
         },
+        DeviceLifecycle::new(6),
         PoweredDevice { wattage: 8.0 },
         BusAttachment {
             buses: vec![BusId::Memory],
         },
         MemoryMappedRegion {
             base: 0x0010_0000,
-            size: 16 * 1024 * 1024, // 16 MiB foundation window
+            size: 16 * 1024 * 1024,
             is_ram: true,
         },
         RigidBody::Dynamic,
@@ -138,6 +133,7 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
             name: "GPU".into(),
             kind: DeviceKind::Gpu,
         },
+        DeviceLifecycle::new(10),
         PoweredDevice { wattage: 150.0 },
         ClockedDevice { hz: 1_500_000_000 },
         BusAttachment {
@@ -158,13 +154,12 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         Name::new("Storage"),
         Storage,
         StorageController::default(),
-        BlockStorage {
-            sector_count: 2048, // 1 MiB foundation disk
-        },
+        BlockStorage { sector_count: 2048 },
         RegisterDevice {
             name: "Storage".into(),
             kind: DeviceKind::Storage,
         },
+        DeviceLifecycle::new(12),
         PoweredDevice { wattage: 6.0 },
         BusAttachment {
             buses: vec![BusId::Io],
@@ -187,6 +182,7 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
             name: "Monitor".into(),
             kind: DeviceKind::Monitor,
         },
+        DeviceLifecycle::new(4),
         PoweredDevice { wattage: 30.0 },
         RigidBody::Dynamic,
         Collider::cuboid(0.3, 0.25, 0.05),
@@ -201,6 +197,7 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
             name: "Keyboard".into(),
             kind: DeviceKind::Keyboard,
         },
+        DeviceLifecycle::new(3),
         PoweredDevice { wattage: 1.0 },
         BusAttachment {
             buses: vec![BusId::Io],
@@ -219,6 +216,7 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
             name: "Mouse".into(),
             kind: DeviceKind::Mouse,
         },
+        DeviceLifecycle::new(3),
         PoweredDevice { wattage: 0.5 },
         BusAttachment {
             buses: vec![BusId::Io],
@@ -232,6 +230,11 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
     commands.spawn((
         Name::new("PowerButton"),
         PowerButton,
+        PowerButtonState {
+            // Foundation: auto-press once so the lifecycle runs without UI.
+            pressed: true,
+            last_pressed: false,
+        },
         RegisterDevice {
             name: "PowerButton".into(),
             kind: DeviceKind::PowerButton,
@@ -244,6 +247,8 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
     commands.spawn((
         Name::new("PowerSupply"),
         PowerSupply,
+        PowerSupplyState::new(),
+        DeviceLifecycle::new(30),
         RegisterDevice {
             name: "PowerSupply".into(),
             kind: DeviceKind::PowerSupply,
@@ -254,5 +259,5 @@ pub fn spawn_virtual_computer(mut commands: Commands) {
         Transform::from_xyz(0.0, 0.4, -0.1),
     ));
 
-    println!("Virtual computer spawned. Devices will auto-register with world systems.");
+    println!("Virtual computer spawned — awaiting power button / PSU sequence.");
 }

@@ -2,26 +2,23 @@
 
 ## Done
 
-- [x] World systems (power, clock, registry, buses, signals, memory, interrupts, connections)
-- [x] Auto-registration of hardware entities
-- [x] Bus transactions (read/write cycles)
-- [x] RAM backing store + memory map
-- [x] Block storage interface
-- [x] Firmware POST / discovery / init sequence
-- [x] Motherboard bus routing
-- [x] CPU issues memory reads via bus
-- [x] Device controllers (keyboard, mouse, GPU, storage)
+- [x] World systems & auto-registration
+- [x] Bus transactions, RAM, block storage
+- [x] Firmware POST / discovery
+- [x] Full power lifecycle (button → PSU → rails → PowerGood)
+- [x] Per-device state machines (Offline → Ready / failure on power loss)
+- [x] ClockEnable gated by firmware + device progress
+- [x] Motherboard bus active only when Ready
+- [x] CPU runs only when Ready + firmware Ready
 
 ## Next
 
-- [ ] Power button interaction toggles PowerSystem
-- [ ] Richer MMIO handlers for storage/GPU/keyboard controllers
-- [ ] Interrupt delivery into CPU core
-- [ ] Firmware hand-off vector / reset vector for guest software
-- [ ] Room geometry inside the physics world
+- [ ] Interactive power button (input / physics interaction)
+- [ ] MMIO command handlers for storage & GPU controllers
+- [ ] Interrupt delivery into CPU
+- [ ] Reset vector / firmware hand-off for guest software
+- [ ] Disconnect / entity removal reactions beyond power loss
 
 ## Later
 
-- [ ] Non-owning Linux emulator stub using only hardware interfaces
-- [ ] Multiple CPUs / APIC-style interrupt routing
-- [ ] DMA-style transfers through the bus system
+- [ ] Linux emulator stub using only hardware interfaces
