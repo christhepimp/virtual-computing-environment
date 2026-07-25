@@ -1,13 +1,8 @@
 //! Minimal Linux boot experiment.
 //!
-//! Drives the first guest boot attempt through the existing integration layer.
-//! All memory, storage, IRQ, and clock traffic is intended to flow:
-//!
-//!   Physics World → Virtual Hardware → Interfaces → Integration Layer → QEMU → Linux
-//!
-//! QEMU remains execution-only. Authority stays in world systems.
+//! Physics World → Virtual Hardware → Interfaces → Integration Layer → QEMU → Linux
+//! QEMU is execution-only. Authority stays in world systems.
 
-use std::fs;
 use std::path::Path;
 
 use bevy::prelude::*;
@@ -62,7 +57,6 @@ impl Default for BootExperiment {
     }
 }
 
-/// Discover optional boot assets under assets/boot/.
 fn asset_path(name: &str) -> Option<String> {
     let candidates = [
         format!("assets/boot/{name}"),
@@ -77,7 +71,7 @@ pub fn boot_experiment_tick(
     power: Res<PowerSystem>,
     signals: Res<SignalSystem>,
     registry: Res<DeviceRegistry>,
-    memory: ResMut<MemoryMapSystem>,
+    mut memory: ResMut<MemoryMapSystem>,
     mut storage: ResMut<StorageSystem>,
     mut interrupts: ResMut<InterruptSystem>,
     clock: Res<ClockSystem>,
@@ -89,7 +83,6 @@ pub fn boot_experiment_tick(
 ) {
     boot.log_ticks = boot.log_ticks.wrapping_add(1);
 
-    // Periodic machine snapshot
     if boot.log_ticks % 120 == 0 {
         log_machine_snapshot(
             &power,
@@ -123,11 +116,7 @@ pub fn boot_experiment_tick(
             }
         }
         BootPhase::LoadingAssets => {
-            if let Some(kernel) = asset_path("vmlinuz") {
-                config.kernel_path = Some(kernel.clone());
-                boot.kernel_loaded = true;
-                println!("[Boot] Kernel found: {kernel}");
-            } else if let Some(kernel) = asset_path("bzImage") {
+            if let Some(kernel) = asset_path("vmlinuz").or_else(|| asset_path("bzImage")) {
                 config.kernel_path = Some(kernel.clone());
                 boot.kernel_loaded = true;
                 println!("[Boot] Kernel found: {kernel}");
@@ -135,28 +124,29 @@ pub fn boot_experiment_tick(
                 println!("[Boot] No kernel image in assets/boot/ (vmlinuz or bzImage)");
             }
 
-            if let Some(initrd) = asset_path("initrd.img") {
-                config.initrd_path = Some(initrd.clone());
-                boot.initrd_loaded = true;
-                println!("[Boot] Initrd found: {initrd}");
-            } else if let Some(initrd) = asset_path("initramfs.cpio") {
+            if let Some(initrd) =
+                asset_path("initrd.img").or_else(|| asset_path("initramfs.cpio"))
+            {
                 config.initrd_path = Some(initrd.clone());
                 boot.initrd_loaded = true;
                 println!("[Boot] Initrd found: {initrd}");
             } else {
-                println!("[Boot] No initrd found (optional for minimal experiments)");
+                println!("[Boot] No initrd found (optional)");
             }
 
-            // Virtual disk: ensure storage device has a recognizable boot sector marker.
-            prepare_virtual_disk(&mut storage, &registry, &mut boot);
+            if let Some(disk) = asset_path("rootfs.img") {
+                config.disk_path = Some(disk.clone());
+                println!("[Boot] Host disk image: {disk}");
+            }
 
-            // Seed a tiny marker into RAM via world memory (not QEMU-owned).
-            seed_ram_boot_marker(&memory);
+            prepare_virtual_disk(&mut storage, &registry, &mut boot);
+            seed_ram_boot_marker(&mut memory);
 
             boot.phase = BootPhase::ConfiguringGuest;
         }
         BootPhase::ConfiguringGuest => {
-            println!("[Boot] Guest config: arch={} machine={} ram={}MiB",
+            println!(
+                "[Boot] Guest config: arch={} machine={} ram={}MiB",
                 config.arch,
                 config.machine,
                 config.ram_bytes / (1024 * 1024)
@@ -168,7 +158,6 @@ pub fn boot_experiment_tick(
             boot.phase = BootPhase::StartingTransport;
         }
         BootPhase::StartingTransport => {
-            // Integration layer owns start; force arming if still stopped.
             if integ.state == EmulatorState::Stopped || integ.state == EmulatorState::Halted {
                 integ.state = EmulatorState::Arming;
             }
@@ -180,8 +169,6 @@ pub fn boot_experiment_tick(
                     integ.transport.mode_name()
                 );
                 events.send(EmulatorEvent::Started);
-
-                // Exercise real paths immediately (dry-run or live).
                 exercise_real_paths(&mut integ, &memory, &storage, &mut interrupts, &registry);
             } else if integ.state == EmulatorState::Error {
                 boot.phase = BootPhase::Failed;
@@ -194,8 +181,6 @@ pub fn boot_experiment_tick(
             println!("[Boot] Observing guest / adapter traffic");
         }
         BootPhase::Observing => {
-            // Keep pumping demonstration traffic on a slow cadence in dry-run
-            // so logs show living paths even without a kernel image.
             if matches!(
                 integ.transport.state,
                 QemuTransportState::DryRun | QemuTransportState::Running
@@ -210,9 +195,9 @@ pub fn boot_experiment_tick(
                 println!("[Boot] Aborted — machine no longer ready");
             }
 
-            // If a real kernel was provided and transport is Running, mark progress.
             if boot.kernel_loaded && integ.transport.state == QemuTransportState::Running {
-                boot.last_status = "QEMU running with kernel — watch serial for Linux boot".into();
+                boot.last_status =
+                    "QEMU running with kernel — watch serial for Linux boot".into();
             } else if !boot.kernel_loaded && integ.transport.state == QemuTransportState::DryRun {
                 boot.last_status =
                     "dry-run: place vmlinuz/bzImage in assets/boot/ for real QEMU boot".into();
@@ -229,7 +214,6 @@ fn prepare_virtual_disk(
 ) {
     let disks = registry.devices_of_kind(DeviceKind::Storage);
     if let Some(&entity) = disks.first() {
-        // Write a simple signature at LBA 0 so storage path is real.
         let mut sector = vec![0u8; 512];
         sector[0..4].copy_from_slice(b"VCE\x01");
         sector[510] = 0x55;
@@ -237,13 +221,8 @@ fn prepare_virtual_disk(
         if storage.write_sectors(entity, 0, &sector) {
             boot.disk_ready = true;
             println!(
-                "[Boot][Storage] Virtual disk ready entity={entity:?} sectors signature written"
+                "[Boot][Storage] Virtual disk ready entity={entity:?} LBA0 signature written"
             );
-
-            // Optional host-side raw image for QEMU -drive if user provides path later.
-            if let Some(path) = asset_path("rootfs.img") {
-                boot_experiment_set_disk(path);
-            }
         } else {
             println!("[Boot][Storage] Failed to write boot signature");
         }
@@ -252,22 +231,12 @@ fn prepare_virtual_disk(
     }
 }
 
-fn boot_experiment_set_disk(path: String) {
-    println!("[Boot][Storage] Host disk image available: {path}");
-    // Config update happens in LoadingAssets when we can mutably access config;
-    // logged here for visibility when discovered via storage prep helpers.
-    let _ = fs::metadata(&path);
-}
-
-fn seed_ram_boot_marker(memory: &MemoryMapSystem) {
-    // Read-only check that RAM window exists; writes go through adapter path later.
-    if let Some(data) = memory.read_ram(0x0010_0000, 16) {
-        println!(
-            "[Boot][Memory] RAM window @0x00100000 readable ({} bytes sample)",
-            data.len()
-        );
-    } else {
-        println!("[Boot][Memory] RAM window @0x00100000 not readable yet");
+fn seed_ram_boot_marker(memory: &mut MemoryMapSystem) {
+    let marker = b"VCE-RAM\0";
+    let ok = memory.write_ram(0x0010_0000, marker);
+    println!("[Boot][Memory] Seed RAM marker @0x00100000 ok={ok}");
+    if let Some(data) = memory.read_ram(0x0010_0000, 8) {
+        println!("[Boot][Memory] Readback {:02x?}", data);
     }
 }
 
@@ -278,7 +247,6 @@ fn exercise_real_paths(
     interrupts: &mut InterruptSystem,
     registry: &DeviceRegistry,
 ) {
-    // 1) Memory path — guest-style read/write through adapter → world
     let addr = 0x0010_0000;
     integ.transport.enqueue_request(GuestRequest::MemoryWrite {
         addr,
@@ -286,23 +254,20 @@ fn exercise_real_paths(
     });
     integ.transport.enqueue_request(GuestRequest::MemoryRead { addr, len: 8 });
 
-    // 2) Storage path
     if let Some(&entity) = registry.devices_of_kind(DeviceKind::Storage).first() {
         integ.transport.enqueue_request(GuestRequest::StorageRead {
             entity_bits: entity.to_bits(),
             lba: 0,
             count: 1,
         });
-        let _ = storage; // reads fulfilled in pump_qemu_transport
+        let _ = storage;
     }
 
-    // 3) Interrupt path — virtual device raises IRQ into world, adapter surfaces it
     if let Some(&kbd) = registry.devices_of_kind(DeviceKind::Keyboard).first() {
         interrupts.raise(1, kbd);
         println!("[Boot][IRQ] Keyboard raised IRQ 1 via InterruptSystem");
     }
 
-    // Memory map presence
     println!(
         "[Boot][Memory] regions={} ram_stores={}",
         memory.regions.len(),
