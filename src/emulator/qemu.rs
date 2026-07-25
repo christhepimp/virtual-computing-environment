@@ -36,11 +36,8 @@ pub enum GuestRequest {
 #[derive(Default, Debug)]
 pub struct QemuTransport {
     pub state: QemuTransportState,
-    /// Child PID when a real process was started.
     pub pid: Option<u32>,
-    /// Inbound requests from guest side (filled by future IPC; injectable for tests).
     pending_requests: Vec<GuestRequest>,
-    /// Outbound responses / inject buffers.
     pub last_mem_read: Option<(u64, Option<Vec<u8>>)>,
     pub last_storage_read: Option<(u64, Option<Vec<u8>>)>,
     pub injected_keys: Vec<u8>,
@@ -62,7 +59,6 @@ impl QemuTransport {
     pub fn start(&mut self, config: &MinimalMachineConfig) -> Result<(), String> {
         self.state = QemuTransportState::Starting;
 
-        // Prefer dry-run unless binary exists — keeps CI and dev machines working.
         let bin = &config.qemu_binary;
         let available = Command::new(bin)
             .arg("--version")
@@ -77,11 +73,11 @@ impl QemuTransport {
 
         let mut cmd = Command::new(bin);
         cmd.arg("-machine").arg(&config.machine);
-        cmd.arg("-m").arg(format!("{}M", config.ram_bytes / (1024 * 1024)).max("16".into()));
+
+        let mem_mb = (config.ram_bytes / (1024 * 1024)).max(16);
+        cmd.arg("-m").arg(format!("{mem_mb}M"));
         cmd.arg("-nographic");
         cmd.arg("-no-reboot");
-
-        // Minimal: no default NIC/storage unless configured — world-backed later.
         cmd.arg("-nodefaults");
         cmd.arg("-serial").arg("stdio");
 
@@ -106,14 +102,9 @@ impl QemuTransport {
             cmd.arg(arg);
         }
 
-        // For foundation integration we do not fully detach a long-running
-        // GUI-less guest in the Bevy loop yet. Record intent and use dry-run
-        // request injection until a dedicated IPC thread is added.
-        // Starting the process is optional and best-effort.
         match cmd.spawn() {
             Ok(child) => {
                 self.pid = Some(child.id());
-                // Intentionally do not block on child — foundation stage.
                 let _ = child;
                 self.state = QemuTransportState::Running;
                 println!("[QemuTransport] spawned pid={:?}", self.pid);
@@ -148,7 +139,6 @@ impl QemuTransport {
         std::mem::take(&mut self.pending_requests)
     }
 
-    /// Test / dry-run helper: enqueue a guest memory read.
     pub fn enqueue_request(&mut self, req: GuestRequest) {
         self.pending_requests.push(req);
     }
