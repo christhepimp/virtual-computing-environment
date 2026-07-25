@@ -35,6 +35,36 @@ All subsystems — environment, hardware, interfaces, and future software layers
 
 ---
 
+## World systems (active runtime)
+
+The physics world hosts a set of **world systems** that manage the entire state of the virtual computer. These systems are the single source of truth for hardware state. Hardware entities do not maintain isolated authoritative state outside them.
+
+| System | Responsibility |
+|--------|----------------|
+| **PowerSystem** | Main power rail, per-device power, consumption |
+| **ClockSystem** | Master clock and per-device clock domains |
+| **DeviceRegistry** | Discovery & registration of every hardware entity |
+| **BusSystem** | Virtual buses and traffic |
+| **SignalSystem** | Discrete signals (reset, power-good, …) |
+| **MemoryMapSystem** | Address space → device mapping |
+| **InterruptSystem** | Pending interrupt vectors |
+| **ConnectionSystem** | Topology (socket, cable, bus, power rail) |
+
+### Registration model
+
+1. A hardware entity is spawned in the physics world with a `RegisterDevice` component (and optional `PoweredDevice`, `ClockedDevice`, `BusAttachment`, `MemoryMappedRegion`, `InterruptSource`, …).
+2. The world systems discover it and enroll it automatically.
+3. Authoritative state for that device lives in the world systems.
+4. Removing the entity triggers unregistration.
+
+New hardware is added by creating a new entity and letting it register. No existing architecture needs to change.
+
+### Emulator relationship
+
+The future Linux emulator will run as software inside this virtual computer. It will only communicate through the world systems and the interfaces published by hardware. It will never own, create, or simulate hardware.
+
+---
+
 ## Conceptual model
 
 ```
@@ -48,68 +78,45 @@ All subsystems — environment, hardware, interfaces, and future software layers
 │   └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
 │   ┌──────────────────────────────────────────────────────────┐   │
-│   │  Virtual Computer (collection of independent entities)   │   │
-│   │                                                          │   │
-│   │   Case · Motherboard · CPU · RAM · GPU · Storage         │   │
-│   │   Monitor · Keyboard · Mouse · PSU · Buses · …           │   │
-│   │                                                          │   │
-│   │   Each entity has:                                       │   │
-│   │     • physical presence (RigidBody, Collider, Transform) │   │
-│   │     • internal state                                     │   │
-│   │     • exposed interfaces (bus, MMIO, interrupt lines)    │   │
+│   │  World Systems (single source of truth for machine state)│   │
+│   │  Power · Clock · Registry · Buses · Signals              │   │
+│   │  Memory Map · Interrupts · Connections                   │   │
 │   └──────────────────────────────────────────────────────────┘   │
 │                          ▲                                       │
-│                          │ interfaces only                       │
+│                          │ auto-registration + interfaces        │
 │   ┌──────────────────────┴───────────────────────────────────┐   │
-│   │  Software processes running on the virtual computer      │   │
-│   │  (future Linux emulator and any other guest software)    │   │
-│   │                                                          │   │
+│   │  Virtual Computer (independent entities)                 │   │
+│   │  Case · Motherboard · CPU · RAM · GPU · Storage          │   │
+│   │  Monitor · Keyboard · Mouse · PSU · …                    │   │
+│   └──────────────────────────────────────────────────────────┘   │
+│                          ▲                                       │
+│                          │ world systems & interfaces only       │
+│   ┌──────────────────────┴───────────────────────────────────┐   │
+│   │  Software processes (future Linux emulator, …)           │   │
 │   │  • do not own hardware                                   │   │
 │   │  • do not simulate hardware                              │   │
-│   │  • only observe and communicate through the interfaces   │   │
-│   │    the hardware itself provides                          │   │
+│   │  • only communicate through world systems / interfaces   │   │
 │   └──────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Design rules derived from the core principle
+## Design rules
 
-1. **Nothing exists outside the physics world.**  
-   Every tangible object and every process that claims to run “on” the computer must be representable as part of the physics simulation (or as software that only talks to interfaces that exist inside it).
-
-2. **Hardware is never owned by software.**  
-   The emulator (and any future guest OS or research tool) may only read from and write to the public interfaces that hardware components expose. It may never create, destroy, or take exclusive ownership of a hardware entity.
-
-3. **Interfaces are first-class and replaceable.**  
-   Buses, memory-mapped regions, interrupt lines, power rails, and future device protocols are themselves entities or components that live in the same world. They can be swapped or extended independently.
-
-4. **Modularity is mandatory.**  
-   Every subsystem (a single chip, a bus protocol, a lighting model, a future research experiment) must be independently replaceable without breaking the rest of the world.
-
-5. **Experimentation is a first-class goal.**  
-   The architecture deliberately keeps the physics world open so that new physical objects, new interface protocols, and new software layers can be introduced and studied without rewriting the foundation.
+1. **Nothing exists outside the physics world.**
+2. **Hardware is never owned by software.**
+3. **World systems own authoritative machine state.**
+4. **Interfaces and registration are how entities join the machine.**
+5. **Modularity is mandatory** — new hardware = new entity + registration.
+6. **Experimentation is a first-class goal.**
 
 ---
 
-## Module layout (current)
+## Module layout
 
-- `physics` – the root reality; configuration and any world-level rules
-- `environment` – the room and atmospheric elements that also live inside the physics world
-- `hardware` – independent component entities + the interface components they expose
-- `emulator` – placeholder for the future software process that will run *on* the virtual computer through those interfaces
-
-All of the above are subsystems that inhabit the single physics world; none of them sit outside it.
-
----
-
-## Future research directions supported by this model
-
-- Physical disassembly and reassembly of the virtual computer
-- Novel bus protocols or interconnects introduced as new entities
-- Multiple competing “guest” software stacks running on the same hardware
-- Direct manipulation of power, heat, or signal integrity as physical phenomena
-- Experiments that treat the emulator itself as an observable process inside the room
-
-Everything remains inside one consistent reality defined by the physics engine.
+- `physics` — root reality
+- `environment` — room and atmosphere (inside the world)
+- `world` — power, clock, devices, buses, signals, memory, interrupts, connections
+- `hardware` — independent component entities that register with world systems
+- `emulator` — non-owning placeholder for future guest software
